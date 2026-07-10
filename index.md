@@ -130,8 +130,8 @@ layout: default
 </style>
 
 <header class="is-hero">
-  <p class="is-eyebrow">A journal in daily draws</p>
-  <h1 class="is-title">InnerSight</h1>
+  <p class="is-eyebrow">Inner sight, written down</p>
+  <h1 class="is-title">The InnerSight</h1>
   <hr class="is-rule">
 </header>
 
