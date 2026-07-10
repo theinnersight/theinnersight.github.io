@@ -146,7 +146,7 @@ layout: default
   <li>
     <a class="is-card" href="{{ post.url | relative_url }}">
       <span class="is-numeral">{{ post.numeral | default: "✶" }}</span>
-      <span class="is-name">{% if post.card %}{% assign w = post.card | split: " " %}{% for word in w %}{% if word == "of" %}of{% else %}{{ word | capitalize }}{% endif %}{% unless forloop.last %} {% endunless %}{% endfor %}{% else %}{{ post.title }}{% endif %}</span>
+      <span class="is-name">{% if post.card %}{% assign w = post.card | split: " " %}{% for word in w %}{% if word == "of" %}of{% else %}{{ word | capitalize }}{% endif %}{% unless forloop.last %}&#32;{% endunless %}{% endfor %}{% else %}{{ post.title }}{% endif %}</span>
       <time class="is-date" datetime="{{ post.date | date_to_xmlschema }}">{{ post.date | date: "%b %-d, %Y" }}</time>
     </a>
   </li>
