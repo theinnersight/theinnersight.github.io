@@ -156,6 +156,10 @@ layout: default
   <p class="is-empty">The deck is unshuffled — no cards drawn yet.</p>
 {% else %}
 <ol class="is-spread" reversed>
+  <li class="is-back" aria-hidden="true">
+    <span class="is-star">✶</span>
+    <span>Tomorrow's draw</span>
+  </li>
   {% for post in site.categories.tarot limit: 11 %}
   <li>
     <a class="is-card" href="{{ post.url | relative_url }}">
@@ -164,13 +168,9 @@ layout: default
       <time class="is-date" datetime="{{ post.date | date_to_xmlschema }}">{{ post.date | date: "%b %-d, %Y" }}</time>
     </a>
   </li>
-  <li class="is-back" aria-hidden="true">
-    <span class="is-star">✶</span>
-    <span>Tomorrow's draw</span>
-  </li>
   {% endfor %}
 </ol>
 {% if site.posts.size > 11 %}
-  <p class="is-more"><a href="{{ '/draws/' | relative_url }}">Past draws ✶</a></p>
+<p class="is-more"><a href="{{ '/draws/' | relative_url }}">Past draws ✶</a></p>
 {% endif %}
 {% endif %}
