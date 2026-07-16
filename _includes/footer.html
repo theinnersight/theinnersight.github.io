@@ -1,7 +1,16 @@
 <footer class="site-footer">
   <div class="wrapper" style="text-align: center;">
     <p style="font-size: 0.68rem; letter-spacing: 0.22em; text-transform: uppercase; color: #7a708c; margin: 0;">
-      ✶ drawn daily · © {{ site.time | date: "%Y" }} the innersight
+      ✶ drawn daily · © {{ site.time | date: "%Y" }} the innersight *
     </p>
+    <script src='https://storage.ko-fi.com/cdn/scripts/overlay-widget.js'></script>
+    <script>
+      kofiWidgetOverlay.draw('albertkw', {
+        'type': 'floating-chat',
+        'floating-chat.donateButton.text': 'Support me',
+        'floating-chat.donateButton.background-color': '#d9534f',
+        'floating-chat.donateButton.text-color': '#fff'
+      });
+    </script>
   </div>
 </footer>
