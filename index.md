@@ -96,6 +96,20 @@ layout: default
     color: #9b8ec4;
   }
 
+  .is-more { text-align: center; margin-top: 2.5rem; }
+  .is-more a {
+    display: inline-block;
+    padding: 0.6rem 1.6rem;
+    border: 1px solid #c9a227;
+    border-radius: 999px;
+    font-size: 0.68rem;
+    letter-spacing: 0.24em;
+    text-transform: uppercase;
+    color: #241f38;
+    text-decoration: none !important;
+  }
+  .is-more a:hover { background: #1e1b33; color: #f5eedf; }
+
   .is-back {
     display: flex;
     flex-direction: column;
@@ -142,18 +156,21 @@ layout: default
   <p class="is-empty">The deck is unshuffled — no cards drawn yet.</p>
 {% else %}
 <ol class="is-spread" reversed>
-  {% for post in site.categories.tarot %}
+  {% for post in site.categories.tarot limit: 11 %}
   <li>
     <a class="is-card" href="{{ post.url | relative_url }}">
       <span class="is-numeral">{{ post.numeral | default: "✶" }}</span>
-      <span class="is-name">{% if post.card %}{% assign w = post.card | split: " " %}{% for word in w %}{% if word == "of" %}of{% else %}{{ word | capitalize }}{% endif %}{% unless forloop.last %}&#32;{% endunless %}{% endfor %}{% else %}{{ post.title }}{% endif %}</span>
+      <span class="is-name">{% include cardname.html post=post %}</span>
       <time class="is-date" datetime="{{ post.date | date_to_xmlschema }}">{{ post.date | date: "%b %-d, %Y" }}</time>
     </a>
   </li>
-  {% endfor %}
   <li class="is-back" aria-hidden="true">
     <span class="is-star">✶</span>
     <span>Tomorrow's draw</span>
   </li>
+  {% endfor %}
 </ol>
+{% if site.posts.size > 11 %}
+  <p class="is-more"><a href="{{ '/draws/' | relative_url }}">Past draws ✶</a></p>
+{% endif %}
 {% endif %}
