@@ -1,0 +1,32 @@
+# .github/workflows/retry-pages-branch-deploy.yml
+# For repos using Pages "Deploy from a branch" (the auto "pages build and
+# deployment" workflow). Re-runs it if it fails, up to 3 total attempts.
+name: Retry failed Pages deploy
+
+on:
+  workflow_run:
+    # This MUST be the exact name of GitHub's auto-generated workflow.
+    workflows: ["pages build and deployment"]
+    types: [completed]
+
+permissions:
+  actions: write
+
+jobs:
+  rerun:
+    # run_attempt guard prevents an infinite re-run loop.
+    if: >
+      github.event.workflow_run.conclusion == 'failure' &&
+      github.event.workflow_run.run_attempt < 3
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wait for the transient issue to clear
+        run: sleep 60
+
+      - name: Re-run the failed Pages deploy
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh run rerun ${{ github.event.workflow_run.id }} \
+            --failed \
+            --repo ${{ github.repository }}
