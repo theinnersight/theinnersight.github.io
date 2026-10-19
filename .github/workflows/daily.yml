@@ -79,7 +79,7 @@ jobs:
           git push origin "HEAD:${{ github.ref_name }}"
 
       - name: Commit agent memory
-        if: ${{ !inputs.check && steps.gen.outputs.skipped == 'false' }}
+        if: ${{ !cancelled() && !inputs.check && steps.gen.outputs.skipped == 'false' }}
         run: |
           cd .agent
           git config user.name  "innersight-bot"
@@ -93,9 +93,10 @@ jobs:
         if: failure()
         env: { GH_TOKEN: "${{ github.token }}" }
         run: |
-          gh issue create --repo "${{ github.repository }}" \
-            --title "daily tarot failed $(date -u +%F)" \
-            --body "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          gh api "repos/${{ github.repository }}/issues" \
+            -f title="daily tarot failed $(date -u +%F)" \
+            -f body="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+          || { echo "::error::issue create failed"; gh auth status; exit 1; }
 
   deploy:
     needs: generate
