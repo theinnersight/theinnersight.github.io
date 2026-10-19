@@ -1,3 +1,14 @@
 title: The Innersight
 description: Inner sight, written down
 theme: minima
+
+# Build determinism only. Post dates come from filenames, so this is unrelated
+# to the agent's schedule.
+timezone: UTC
+
+future: true
+exclude:
+  - node_modules
+  - vendor
+  - Gemfile
+  - Gemfile.lock
