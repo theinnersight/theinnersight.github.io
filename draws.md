@@ -34,8 +34,9 @@ permalink: /draws/
   letter-spacing: 0.18em;
   text-transform: uppercase;
   color: #9b8ec4;
-  min-width: 4.5rem;
+  min-width: 6.5rem;
 }
+.dr-dow { color: #c9a227; }
 .dr-card a {
   font-family: 'Cormorant Garamond', Georgia, serif;
   font-style: italic;
@@ -75,7 +76,7 @@ permalink: /draws/
 <h2 class="dr-month">{{ this_month }}</h2>
 {% endif %}
 <div class="dr-row">
-<time class="dr-date" datetime="{{ post.date | date_to_xmlschema }}">{{ post.date | date: "%b %-d" }}</time>
+<time class="dr-date" datetime="{{ post.date | date_to_xmlschema }}"><span class="dr-dow">{{ post.date | date: "%a" }}</span>, {{ post.date | date: "%b %-d" }}</time>
 <span class="dr-card"><a href="{{ post.url | relative_url }}">{% include cardname.html post=post %}</a>{% if post.numeral %}<span class="dr-numeral">{{ post.numeral }}</span>{% endif %}</span>
 </div>
 {% assign prev_month = this_month %}
