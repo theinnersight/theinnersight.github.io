@@ -4,7 +4,7 @@ on:
   schedule:
     - cron: "0 10 * * *"      # 10:00 UTC = 05:00 EST / 06:00 EDT
   push:
-    branches: ["**"]          # narrow to [master] once testing is done
+    branches: ["**"]
   workflow_dispatch:
     inputs:
       date:   { description: "YYYY-MM-DD (local)", required: false }
@@ -22,12 +22,13 @@ concurrency:
 
 jobs:
   generate:
+    if: ${{ github.repository == 'theinnersight/theinnersight.github.io' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - name: Mint app token
         id: app
-        uses: actions/create-github-app-token@v1
+        uses: actions/create-github-app-token@v2
         with:
           app-id: ${{ secrets.APP_ID }}
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
@@ -35,18 +36,24 @@ jobs:
           repositories: innersight-agent
 
       - name: Checkout site
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with: { path: site }
 
       - name: Checkout agent
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: ${{ vars.AGENT_REPO }}
           token: ${{ steps.app.outputs.token }}
           path: .agent
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with: { node-version: "22" }
+
+      - name: Preflight
+        run: |
+          test -n "${{ secrets.API_KEY }}" || { echo "::error::API_KEY missing"; exit 1; }
+          test -f "${{ github.workspace }}/.agent/scripts/run-agent.mjs" \
+            || { echo "::error::AGENT_REPO unset or wrong — no run-agent.mjs"; exit 1; }
 
       - name: Generate entry
         id: gen
@@ -55,29 +62,29 @@ jobs:
           API_KEY: ${{ secrets.API_KEY }}
           AGENT_DIR: ${{ github.workspace }}/.agent
           EVENT_NAME: ${{ github.event_name }}
-          DATE_OVERRIDE: ${{ inputs.date  || vars.DATE_OVERRIDE }}
-          FORCE:         ${{ inputs.force || vars.FORCE }}
-          CHECK_ONLY:    ${{ inputs.check }}
+          DATE_OVERRIDE: ${{ inputs.date || vars.DATE_OVERRIDE }}
+          FORCE: ${{ github.event_name == 'workflow_dispatch' && format('{0}', inputs.force) || vars.FORCE }}
+          CHECK_ONLY: ${{ inputs.check }}
         run: node "$AGENT_DIR/scripts/run-agent.mjs"
 
       - name: Commit site
-        if: steps.gen.outputs.skipped == 'false'
+        if: ${{ !inputs.check && steps.gen.outputs.skipped == 'false' }}
         working-directory: site
         run: |
           git config user.name  "innersight-bot"
           git config user.email "bot@users.noreply.github.com"
-          git add _posts
+          git add -A
           git diff --cached --quiet && exit 0
           git commit -m "Create ${{ steps.gen.outputs.date }}-entry.md"
           git push origin "HEAD:${{ github.ref_name }}"
 
       - name: Commit agent memory
-        if: steps.gen.outputs.skipped == 'false'
+        if: ${{ !inputs.check && steps.gen.outputs.skipped == 'false' }}
         run: |
           cd .agent
           git config user.name  "innersight-bot"
           git config user.email "bot@users.noreply.github.com"
-          git add memory.json
+          git add -A
           git diff --cached --quiet && exit 0
           git commit -m "memory: ${{ steps.gen.outputs.date }}"
           git push
@@ -92,9 +99,7 @@ jobs:
 
   deploy:
     needs: generate
-    if: >-
-      always() &&
-      (github.ref == 'refs/heads/master' || inputs.deploy)
+    if: ${{ always() && (github.ref == 'refs/heads/master' || inputs.deploy) }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -105,7 +110,7 @@ jobs:
       name: github-pages
       url: ${{ steps.deploy.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: actions/configure-pages@v5
       - uses: actions/jekyll-build-pages@v1
         with: { source: ./, destination: ./_site }
