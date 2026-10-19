@@ -1,3 +1,6 @@
 title: The Innersight
 description: Inner sight, written down
 theme: minima
+
+minima:
+  date_format: "%a, %b %-d, %Y"
