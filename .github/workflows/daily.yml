@@ -37,7 +37,9 @@ jobs:
 
       - name: Checkout site
         uses: actions/checkout@v5
-        with: { path: site }
+        with:
+          path: site
+          fetch-depth: 0
 
       - name: Checkout agent
         uses: actions/checkout@v5
@@ -73,14 +75,16 @@ jobs:
         run: |
           git config user.name  "innersight-bot"
           git config user.email "bot@users.noreply.github.com"
-          git add _posts
+          git add -A
           git diff --cached --quiet && exit 0
           git commit -m "Create ${{ steps.gen.outputs.date }}-entry.md"
+          ok=0
           for i in 1 2 3; do
-            git pull --rebase --autostash origin "${GITHUB_REF_NAME}" &&
-              git push origin "HEAD:${GITHUB_REF_NAME}" && break
+            if git pull --rebase --autostash origin "${GITHUB_REF_NAME}" &&
+               git push origin "HEAD:${GITHUB_REF_NAME}"; then ok=1; break; fi
             echo "push rejected (attempt $i)"; sleep 5
           done
+          [ "$ok" = 1 ] || { echo "::error::push failed after 3 attempts"; exit 1; }
 
       - name: Commit agent memory
         if: ${{ !cancelled() && !inputs.check && steps.gen.outputs.skipped == 'false' }}
