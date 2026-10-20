@@ -67,7 +67,12 @@ jobs:
           DATE_OVERRIDE: ${{ inputs.date || vars.DATE_OVERRIDE }}
           FORCE: ${{ github.event_name == 'workflow_dispatch' && format('{0}', inputs.force) || vars.FORCE }}
           CHECK_ONLY: ${{ inputs.check }}
-        run: node "$AGENT_DIR/scripts/run-agent.mjs"
+        run: |
+          set -o pipefail
+          rc=0
+          node "$AGENT_DIR/scripts/run-agent.mjs" 2>&1 | tee /tmp/agent.log || rc=$?
+          { echo '```'; tail -40 /tmp/agent.log; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          exit $rc
 
       - name: Commit site
         if: ${{ !inputs.check && steps.gen.outputs.skipped == 'false' }}
