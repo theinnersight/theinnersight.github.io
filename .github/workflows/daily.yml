@@ -125,7 +125,17 @@ jobs:
       name: github-pages
       url: ${{ steps.deploy.outputs.page_url }}
     steps:
+      # github.sha is the TRIGGERING commit — generate has since pushed a new
+      # post, so build the branch tip or the post waits a day to publish
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.ref_name }}
+
+      - name: Show what we are building
+        run: |
+          git log -1 --format='building %h %s'
+          head -8 _posts/2026-10-20-entry.md || true
+
       - uses: actions/configure-pages@v5
       - uses: actions/jekyll-build-pages@v1
         with: { source: ./, destination: ./_site }
