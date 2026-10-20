@@ -4,3 +4,12 @@ theme: minima
 
 minima:
   date_format: "%a, %b %-d, %Y"
+
+timezone: UTC
+
+future: true
+exclude:
+  - node_modules
+  - vendor
+  - Gemfile
+  - Gemfile.lock
