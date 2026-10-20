@@ -2,8 +2,9 @@ title: The Innersight
 description: Inner sight, written down
 theme: minima
 
-# Build determinism only. Post dates come from filenames, so this is unrelated
-# to the agent's schedule.
+minima:
+  date_format: "%a, %b %-d, %Y"
+
 timezone: UTC
 
 future: true
