@@ -4,7 +4,7 @@ on:
   schedule:
     - cron: "0 10 * * *"      # 10:00 UTC = 05:00 EST / 06:00 EDT
   push:
-    branches: ["**"]
+    branches: ["master"]
   workflow_dispatch:
     inputs:
       date:   { description: "YYYY-MM-DD (local)", required: false }
