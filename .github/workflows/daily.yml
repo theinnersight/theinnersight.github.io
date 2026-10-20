@@ -103,17 +103,18 @@ jobs:
           git push
 
       - name: Open issue on failure
-        if: failure()
-        env: { GH_TOKEN: "${{ github.token }}" }
+        if: ${{ failure() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          gh api "repos/${{ github.repository }}/issues" \
+          out=$(gh api --method POST "repos/${{ github.repository }}/issues" \
             -f title="daily tarot failed $(date -u +%F)" \
-            -f body="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
-          || { echo "::error::issue create failed"; gh auth status; exit 1; }
+            -f body="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" 2>&1) \
+            || echo "::warning::issue create failed: $out  (are Issues enabled in Settings → Features?)"
 
   deploy:
     needs: generate
-    if: ${{ always() && (github.ref == 'refs/heads/master' || inputs.deploy) }}
+    if: ${{ always() && !inputs.check && (github.ref == 'refs/heads/master' || inputs.deploy) }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
