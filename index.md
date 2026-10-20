@@ -11,7 +11,7 @@ layout: default
   }
 
   .site-title { display: none; }
-  
+
   .is-eyebrow {
     font-size: 0.72rem;
     letter-spacing: 0.28em;
@@ -76,9 +76,9 @@ layout: default
     font-size: 1.05rem;
     letter-spacing: 0.18em;
     color: #c9a227;
-    text-transform: uppercase;   /* new */
+    text-transform: uppercase;
   }
-  
+
   .is-name {
     font-family: 'Cormorant Garamond', Georgia, serif;
     font-style: italic;
@@ -88,12 +88,18 @@ layout: default
     text-align: center;
     line-height: 1.2;
   }
-  
+
   .is-date {
+    display: block;
+    text-align: center;
     font-size: 0.62rem;
     letter-spacing: 0.22em;
     text-transform: uppercase;
     color: #9b8ec4;
+  }
+  .is-dow {
+    display: block;
+    color: #c9a227;
   }
 
   .is-more { text-align: center; margin-top: 2.5rem; }
@@ -165,7 +171,10 @@ layout: default
     <a class="is-card" href="{{ post.url | relative_url }}">
       <span class="is-numeral">{{ post.numeral | default: "✶" }}</span>
       <span class="is-name">{% include cardname.html post=post %}</span>
-      <time class="is-date" datetime="{{ post.date | date_to_xmlschema }}">{{ post.date | date: "%b %-d, %Y" }}</time>
+      <time class="is-date" datetime="{{ post.date | date_to_xmlschema }}">
+        <span class="is-dow">{{ post.date | date: "%a" }}</span>
+        <span>{{ post.date | date: "%b %-d, %Y" }}</span>
+      </time>
     </a>
   </li>
   {% endfor %}
