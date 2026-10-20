@@ -76,7 +76,11 @@ jobs:
           git add _posts
           git diff --cached --quiet && exit 0
           git commit -m "Create ${{ steps.gen.outputs.date }}-entry.md"
-          git push origin "HEAD:${{ github.ref_name }}"
+          for i in 1 2 3; do
+            git pull --rebase --autostash origin "${GITHUB_REF_NAME}" &&
+              git push origin "HEAD:${GITHUB_REF_NAME}" && break
+            echo "push rejected (attempt $i)"; sleep 5
+          done
 
       - name: Commit agent memory
         if: ${{ !cancelled() && !inputs.check && steps.gen.outputs.skipped == 'false' }}
