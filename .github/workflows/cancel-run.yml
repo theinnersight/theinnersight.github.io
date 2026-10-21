@@ -1,0 +1,32 @@
+name: cancel run
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "Run ID to force-cancel (the number in the run URL)"
+        required: true
+
+permissions:
+  actions: write
+
+jobs:
+  cancel:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Force-cancel, or delete if that is refused
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ inputs.run_id }}
+        run: |
+          if gh api --method POST \
+               "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}/force-cancel"; then
+            echo "force-cancel accepted"
+          else
+            echo "force-cancel refused — deleting the run instead"
+            gh api --method DELETE \
+              "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}"
+          fi
+          echo "---"
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}" \
+            --jq '{status, conclusion, updated_at}' || echo "(run deleted)"
