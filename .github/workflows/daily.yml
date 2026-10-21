@@ -3,8 +3,8 @@ run-name: "daily tarot — ${{ github.event_name }}"
 
 on:
   schedule:
-    - cron: "47 15 * * *"     # tarot:primary — 10:10 UTC = 05:10 local
-    - cron: "50 15 * * *"     # fallback — only runs if the primary was dropped
+    - cron: "15 15 * * *"     # tarot:primary — 10:10 UTC = 05:10 local
+    - cron: "20 15 * * *"     # fallback — only runs if the primary was dropped
   push:
     branches: ["master"]
   workflow_dispatch:
