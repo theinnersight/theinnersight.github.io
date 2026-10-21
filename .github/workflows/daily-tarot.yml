@@ -61,13 +61,32 @@ jobs:
         with: { node-version: "22" }
 
       - name: Preflight
+        env:
+          AGENT_DIR: ${{ github.workspace }}/.agent
         run: |
+          set -euo pipefail
+
           test -n "${{ secrets.API_KEY }}" || { echo "::error::API_KEY missing"; exit 1; }
-          test -f "${{ github.workspace }}/.agent/scripts/run-agent.mjs" \
+          test -f "$AGENT_DIR/scripts/run-agent.mjs" \
             || { echo "::error::AGENT_REPO unset or wrong — no run-agent.mjs"; exit 1; }
-          # a syntax error should fail in a second, not after the checkouts
-          find "${{ github.workspace }}/.agent/scripts" -name '*.mjs' -print0 \
-            | xargs -0 -n1 node --check
+
+          echo "node $(node --version)"
+
+          # explicit loop, not find | xargs: xargs emits nothing per file and
+          # exits 123 without saying which one failed
+          count=0
+          for f in $(find "$AGENT_DIR/scripts" -name '*.mjs' | sort); do
+            if node --check "$f"; then
+              echo "  ok   ${f#"$AGENT_DIR/"}"
+            else
+              echo "::error file=$f::syntax error"
+              exit 1
+            fi
+            count=$((count + 1))
+          done
+
+          [ "$count" -gt 0 ] || { echo "::error::no .mjs files found under $AGENT_DIR/scripts"; exit 1; }
+          echo "syntax ok: $count file(s)"
 
       - name: Generate entry
         id: gen
