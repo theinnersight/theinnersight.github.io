@@ -3,8 +3,8 @@ run-name: "daily tarot — ${{ github.event_name }}"
 
 on:
   schedule:
-    - cron: "40 15 * * *"     # tarot:primary — 10:10 UTC = 05:10 local
-    - cron: "0 15 * * *"     # catch-up +2h
+    - cron: "0 16 * * *"     # tarot:primary — 10:10 UTC = 05:10 local
+    - cron: "30 16 * * *"     # catch-up +2h
     - cron: "45 14 * * *"     # catch-up +4h
   push:
     branches: ["master"]
