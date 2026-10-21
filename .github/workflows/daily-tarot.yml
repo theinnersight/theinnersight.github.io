@@ -2,7 +2,7 @@ name: daily tarot
 run-name: "daily tarot — ${{ github.event_name }} ${{ github.event.schedule }}"
 
 env:
-  # several actions still target Node 20; runner Node 24 is the current default
+  # Node 20 actions on a Node 24 runner
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 on:
@@ -23,8 +23,7 @@ permissions:
   contents: write
   issues: write
 
-# group name is versioned: bump the suffix to escape a wedged run.
-# cancel-in-progress so a zombie is superseded rather than blocking the day.
+# bump the suffix to escape a wedged run; cancel-in-progress supersedes zombies
 concurrency:
   group: daily-tarot-v2
   cancel-in-progress: true
@@ -37,12 +36,13 @@ jobs:
     steps:
       - name: Mint app token
         id: app
-        uses: actions/create-github-app-token@v2
+        # v3: repositories accepts "owner/name", matching vars.AGENT_REPO
+        uses: actions/create-github-app-token@v3
         with:
           app-id: ${{ secrets.APP_ID }}
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
           owner: theinnersight
-          repositories: innersight-agent
+          repositories: ${{ vars.AGENT_REPO }}
 
       - name: Checkout site
         uses: actions/checkout@v5
@@ -62,11 +62,17 @@ jobs:
 
       - name: Preflight
         env:
+          API_KEY: ${{ secrets.API_KEY }}
           AGENT_DIR: ${{ github.workspace }}/.agent
         run: |
           set -euo pipefail
 
-          test -n "${{ secrets.API_KEY }}" || { echo "::error::no API key"; exit 1; }
+          # logs are public: rewrite anything naming the provider
+          # (character classes so the word itself is not in this file)
+          redact() { sed -E 's/[Vv][Ee][Nn][Ii][Cc][Ee]/api/g'; }
+
+          # env, not an expression — the run script is echoed into the log
+          test -n "$API_KEY" || { echo "::error::no API key"; exit 1; }
           test -f "$AGENT_DIR/scripts/run-agent.mjs" \
             || { echo "::error::agent repo not checked out"; exit 1; }
 
@@ -74,15 +80,14 @@ jobs:
 
           n=0
           for f in $(find "$AGENT_DIR/scripts" -name '*.mjs' | sort); do
-            if ! out=$(node --check "$f" 2>&1); then
-              # node's first line is "path:LINE"; the source frame is omitted so
-              # nothing from the agent repo is dumped into the log
+            n=$((n + 1))
+            # no filenames or source frames: those live in the private checkout
+            if ! out=$(node --check "$f" 2>&1 | redact); then
               line=$(printf '%s' "$out" | head -1 | sed 's/.*://')
               msg=$(printf '%s' "$out" | grep -m1 'SyntaxError' || echo 'syntax error')
-              echo "::error file=${f#"$AGENT_DIR/"},line=$line::$msg"
+              echo "::error::agent script #$n has a syntax error (line $line): $msg"
               exit 1
             fi
-            n=$((n + 1))
           done
           [ "$n" -gt 0 ] || { echo "::error::no scripts found"; exit 1; }
 
@@ -90,7 +95,7 @@ jobs:
 
       - name: Generate entry
         id: gen
-        # keeps the step under the job's 15 min and under run-agent's 7 min deadline
+        # under the job's 15 min and run-agent's 7 min deadline
         timeout-minutes: 8
         working-directory: site
         env:
@@ -102,8 +107,10 @@ jobs:
           CHECK_ONLY: ${{ inputs.check }}
         run: |
           set -o pipefail
+          # public boundary: redact again even though the agent scrubs itself
+          redact() { sed -E 's/[Vv][Ee][Nn][Ii][Cc][Ee]/api/g'; }
           rc=0
-          node "$AGENT_DIR/scripts/run-agent.mjs" 2>&1 | tee /tmp/agent.log || rc=$?
+          node "$AGENT_DIR/scripts/run-agent.mjs" 2>&1 | redact | tee /tmp/agent.log || rc=$?
           { echo '```'; tail -40 /tmp/agent.log; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
           exit $rc
 
@@ -159,10 +166,9 @@ jobs:
       name: github-pages
       url: ${{ steps.deploy.outputs.page_url }}
     steps:
-      # github.sha is the TRIGGERING commit — generate has since pushed a new
-      # post, so build the branch tip or the post waits a day to publish
       - uses: actions/checkout@v5
         with:
+          # branch tip, not github.sha: generate has already pushed today's post
           ref: ${{ github.ref_name }}
 
       - name: Show what we are building
