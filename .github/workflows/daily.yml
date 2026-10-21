@@ -2,7 +2,8 @@ name: daily tarot
 
 on:
   schedule:
-    - cron: "0 10 * * *"      # 10:00 UTC = 05:00 EST / 06:00 EDT
+    - cron: "10 10 * * *"     # tarot:primary — 10:10 UTC = 05:10 local
+    - cron: "10 11 * * *"     # fallback — only runs if the primary was dropped
   push:
     branches: ["master"]
   workflow_dispatch:
