@@ -1,4 +1,5 @@
 name: daily tarot
+run-name: "daily tarot — ${{ github.event_name }}"
 
 on:
   schedule:
