@@ -142,7 +142,7 @@ jobs:
           ls -t _posts/*.md | head -3
 
       - uses: actions/configure-pages@v5
-      - uses: actions/jackyll-build-pages@v1
+      - uses: actions/jekyll-build-pages@v1
         with: { source: ./, destination: ./_site }
       - uses: actions/upload-pages-artifact@v3
         with: { path: ./_site }
