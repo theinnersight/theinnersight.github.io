@@ -3,8 +3,9 @@ run-name: "daily tarot — ${{ github.event_name }}"
 
 on:
   schedule:
-    - cron: "15 15 * * *"     # tarot:primary — 10:10 UTC = 05:10 local
-    - cron: "20 15 * * *"     # fallback — only runs if the primary was dropped
+    - cron: "20 15 * * *"     # tarot:primary — 10:10 UTC = 05:10 local
+    - cron: "45 15 * * *"     # failover
+    - cron: "23 14 * * *"     # catch-up +4h
   push:
     branches: ["master"]
   workflow_dispatch:
@@ -136,7 +137,7 @@ jobs:
       - name: Show what we are building
         run: |
           git log -1 --format='building %h %s'
-          head -8 _posts/2026-10-20-entry.md || true
+          ls -t _posts/*.md | head -3
 
       - uses: actions/configure-pages@v5
       - uses: actions/jekyll-build-pages@v1
