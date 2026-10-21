@@ -76,10 +76,16 @@ jobs:
           # exits 123 without saying which one failed
           count=0
           for f in $(find "$AGENT_DIR/scripts" -name '*.mjs' | sort); do
-            if node --check "$f"; then
-              echo "  ok   ${f#"$AGENT_DIR/"}"
+            rel="${f#"$AGENT_DIR/"}"
+            if out=$(node --check "$f" 2>&1); then
+              echo "  ok   $rel"
             else
-              echo "::error file=$f::syntax error"
+              # node's first line is "path:LINE". Deliberately not printing the
+              # source frame — for a multi-line token it spans to EOF and dumps
+              # the whole file into a public log.
+              line=$(printf '%s' "$out" | head -1 | sed 's/.*://')
+              msg=$(printf '%s' "$out" | grep -m1 'SyntaxError' || echo 'syntax error')
+              echo "::error file=$rel,line=$line::$msg"
               exit 1
             fi
             count=$((count + 1))
