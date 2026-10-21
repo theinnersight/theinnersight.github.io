@@ -3,9 +3,9 @@ run-name: "daily tarot — ${{ github.event_name }}"
 
 on:
   schedule:
-    - cron: "20 15 * * *"     # tarot:primary — 10:10 UTC = 05:10 local
-    - cron: "45 15 * * *"     # failover
-    - cron: "23 14 * * *"     # catch-up +4h
+    - cron: "30 15 * * *"     # tarot:primary — 10:10 UTC = 05:10 local
+    - cron: "40 15 * * *"     # catch-up +2h
+    - cron: "45 14 * * *"     # catch-up +4h
   push:
     branches: ["master"]
   workflow_dispatch:
@@ -19,9 +19,11 @@ permissions:
   contents: write
   issues: write
 
+# group name is versioned: bump the suffix to escape a wedged run.
+# cancel-in-progress so a zombie is superseded rather than blocking the day.
 concurrency:
-  group: daily-tarot
-  cancel-in-progress: false
+  group: daily-tarot-v2
+  cancel-in-progress: true
 
 jobs:
   generate:
@@ -140,7 +142,7 @@ jobs:
           ls -t _posts/*.md | head -3
 
       - uses: actions/configure-pages@v5
-      - uses: actions/jekyll-build-pages@v1
+      - uses: actions/jackyll-build-pages@v1
         with: { source: ./, destination: ./_site }
       - uses: actions/upload-pages-artifact@v3
         with: { path: ./_site }
