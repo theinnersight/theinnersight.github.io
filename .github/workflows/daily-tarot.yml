@@ -1,5 +1,9 @@
 name: daily tarot
-run-name: "daily tarot — ${{ github.event_name }}"
+run-name: "daily tarot — ${{ github.event_name }} ${{ github.event.schedule }}"
+
+env:
+  # several actions still target Node 20; runner Node 24 is the current default
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 on:
   schedule:
@@ -61,9 +65,14 @@ jobs:
           test -n "${{ secrets.API_KEY }}" || { echo "::error::API_KEY missing"; exit 1; }
           test -f "${{ github.workspace }}/.agent/scripts/run-agent.mjs" \
             || { echo "::error::AGENT_REPO unset or wrong — no run-agent.mjs"; exit 1; }
+          # a syntax error should fail in a second, not after the checkouts
+          find "${{ github.workspace }}/.agent/scripts" -name '*.mjs' -print0 \
+            | xargs -0 -n1 node --check
 
       - name: Generate entry
         id: gen
+        # keeps the step under the job's 15 min and under run-agent's 7 min deadline
+        timeout-minutes: 8
         working-directory: site
         env:
           API_KEY: ${{ secrets.API_KEY }}
