@@ -66,33 +66,27 @@ jobs:
         run: |
           set -euo pipefail
 
-          test -n "${{ secrets.API_KEY }}" || { echo "::error::API_KEY missing"; exit 1; }
+          test -n "${{ secrets.API_KEY }}" || { echo "::error::no API key"; exit 1; }
           test -f "$AGENT_DIR/scripts/run-agent.mjs" \
-            || { echo "::error::AGENT_REPO unset or wrong — no run-agent.mjs"; exit 1; }
+            || { echo "::error::agent repo not checked out"; exit 1; }
 
           echo "node $(node --version)"
 
-          # explicit loop, not find | xargs: xargs emits nothing per file and
-          # exits 123 without saying which one failed
-          count=0
+          n=0
           for f in $(find "$AGENT_DIR/scripts" -name '*.mjs' | sort); do
-            rel="${f#"$AGENT_DIR/"}"
-            if out=$(node --check "$f" 2>&1); then
-              echo "  ok   $rel"
-            else
-              # node's first line is "path:LINE". Deliberately not printing the
-              # source frame — for a multi-line token it spans to EOF and dumps
-              # the whole file into a public log.
+            if ! out=$(node --check "$f" 2>&1); then
+              # node's first line is "path:LINE"; the source frame is omitted so
+              # nothing from the agent repo is dumped into the log
               line=$(printf '%s' "$out" | head -1 | sed 's/.*://')
               msg=$(printf '%s' "$out" | grep -m1 'SyntaxError' || echo 'syntax error')
-              echo "::error file=$rel,line=$line::$msg"
+              echo "::error file=${f#"$AGENT_DIR/"},line=$line::$msg"
               exit 1
             fi
-            count=$((count + 1))
+            n=$((n + 1))
           done
+          [ "$n" -gt 0 ] || { echo "::error::no scripts found"; exit 1; }
 
-          [ "$count" -gt 0 ] || { echo "::error::no .mjs files found under $AGENT_DIR/scripts"; exit 1; }
-          echo "syntax ok: $count file(s)"
+          echo "syntax ok ($n files)"
 
       - name: Generate entry
         id: gen
@@ -146,10 +140,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          out=$(gh api --method POST "repos/${{ github.repository }}/issues" \
+          gh api --method POST "repos/${{ github.repository }}/issues" \
             -f title="daily tarot failed $(date -u +%F)" \
-            -f body="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" 2>&1) \
-            || echo "::warning::issue create failed: $out  (are Issues enabled in Settings → Features?)"
+            -f body="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            >/dev/null 2>&1 \
+            || echo "::warning::could not open a failure issue (Issues disabled?)"
 
   deploy:
     needs: generate
