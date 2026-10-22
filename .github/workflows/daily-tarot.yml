@@ -7,9 +7,9 @@ env:
 
 on:
   schedule:
-    - cron: "45 17 * * *"     # tarot:primary
-    - cron: "15 18 * * *"     # catch-up +1h
-    - cron: "45 21 * * *"     # catch-up +4h
+    - cron: "10 10 * * *"     # tarot:primary
+    - cron: "10 11 * * *"     # catch-up +1h
+    - cron: "10 14 * * *"     # catch-up +4h
   push:
     branches: ["master"]
   workflow_dispatch:
