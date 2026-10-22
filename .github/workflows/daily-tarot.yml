@@ -7,9 +7,9 @@ env:
 
 on:
   schedule:
-    - cron: "10 10 * * *"     # tarot:primary
-    - cron: "10 11 * * *"     # catch-up +1h
-    - cron: "10 14 * * *"     # catch-up +4h
+    - cron: "10 7 * * *"      # tarot:primary    (target run ~12:00 UTC / 08:00 EDT)
+    - cron: "10 8 * * *"      # catch-up +1h     (target run ~13:00 UTC / 09:00 EDT)
+    - cron: "10 11 * * *"     # catch-up +4h     (target run ~16:00 UTC / 12:00 EDT)
   push:
     branches: ["master"]
   workflow_dispatch:
