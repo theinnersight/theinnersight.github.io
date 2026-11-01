@@ -1,5 +1,5 @@
 name: daily tarot
-run-name: "daily tarot — ${{ github.event_name }} ${{ github.event.schedule }}"
+run-name: "daily tarot — ${{ github.event_name }} ${{ github.event.schedule || github.ref_name }}"
 
 env:
   # Node 20 actions on a Node 24 runner
@@ -7,11 +7,16 @@ env:
 
 on:
   schedule:
-    - cron: "10 4 * * *"      # tarot:primary    (target run ~9:30 UTC  / 05:30 EDT)
-    - cron: "10 5 * * *"      # catch-up +1h     (target run ~10:30 UTC / 06:30 EDT)
-    - cron: "10 8 * * *"      # catch-up +4h     (target run ~13:30 UTC / 09:30 EDT)
+    # These are the literal fire times. The old comments claimed each run lands
+    # ~5h20m later, which is more delay than the scheduler produces — verify
+    # against the run history before trusting either.
+    - cron: "10 4 * * *"      # primary
+    - cron: "10 5 * * *"      # catch-up +1h
+    - cron: "10 8 * * *"      # catch-up +4h
   push:
     branches: ["master"]
+    # only the files a regeneration actually depends on
+    paths: ["_posts/**", "_config.yml", ".github/workflows/daily-tarot.yml"]
   workflow_dispatch:
     inputs:
       date:   { description: "YYYY-MM-DD (local)", required: false }
@@ -22,9 +27,10 @@ on:
 permissions:
   contents: write
 
-# bump the suffix to escape a wedged run; cancel-in-progress supersedes zombies
+# bump the suffix to escape a wedged run; cancel-in-progress supersedes zombies.
+# check runs get their own group, so verifying config never kills a live generate
 concurrency:
-  group: daily-tarot-v2
+  group: daily-tarot-v2-${{ inputs.check && 'check' || 'run' }}
   cancel-in-progress: true
 
 jobs:
@@ -32,11 +38,12 @@ jobs:
     if: ${{ github.repository == 'theinnersight/theinnersight.github.io' }}
     runs-on: ubuntu-latest
     timeout-minutes: 18
-    # consumed by the deploy job's notifier, which runs after the build lands
+    # consumed by notify, which runs only after deploy has landed the build
     outputs:
       date: ${{ steps.gen.outputs.date }}
       skipped: ${{ steps.gen.outputs.skipped }}
       created: ${{ steps.commit.outputs.created }}
+      card: ${{ steps.commit.outputs.card }}
     steps:
       - name: Mint app token
         id: app
@@ -51,19 +58,19 @@ jobs:
           repositories: ${{ vars.AGENT_REPO }}
 
       - name: Checkout site
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           path: site
           fetch-depth: 0
 
       - name: Checkout agent
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           repository: ${{ vars.AGENT_REPO }}
           token: ${{ steps.app.outputs.token }}
           path: .agent
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v7
         with: { node-version: "22" }
 
       - name: Preflight
@@ -78,7 +85,8 @@ jobs:
           # filenames out of them; the name is a secret, not in this file
           PROVIDER="${PROVIDER:-}"
           if [[ "$PROVIDER" =~ ^[a-z0-9.-]+$ ]]; then
-            redact() { sed -E "s/$PROVIDER/api/gI"; }
+            # the guard allows '.', which is a regex metachar: escape it
+            redact() { sed -E "s/${PROVIDER//./\\.}/api/gI"; }
           else
             redact() { cat; }
             echo "::warning::secrets.PROVIDER_NAME unset; public logs are not redacted"
@@ -90,9 +98,12 @@ jobs:
             || { echo "::error::agent repo not checked out"; exit 1; }
 
           echo "node $(node --version)"
+          # which agent build ran, without pinning it: see the run summary
+          { echo -n 'agent '; git -C "$AGENT_DIR" log -1 --format='%h %s'; } | redact >> "$GITHUB_STEP_SUMMARY"
 
           n=0
-          for f in $(find "$AGENT_DIR/scripts" -name '*.mjs' | sort); do
+          # NUL-delimited: a filename with a space would split the word list
+          while IFS= read -r -d '' f; do
             n=$((n + 1))
             # no filenames or source frames: those live in the private checkout
             if ! out=$(node --check "$f" 2>&1 | redact); then
@@ -101,7 +112,7 @@ jobs:
               echo "::error::agent script #$n has a syntax error (line $line): $msg"
               exit 1
             fi
-          done
+          done < <(find "$AGENT_DIR/scripts" -name '*.mjs' -print0 | sort -z)
           [ "$n" -gt 0 ] || { echo "::error::no scripts found"; exit 1; }
 
           echo "syntax ok ($n files)"
@@ -118,14 +129,16 @@ jobs:
           PROVIDER: ${{ secrets.PROVIDER_NAME }}
           EVENT_NAME: ${{ github.event_name }}
           DATE_OVERRIDE: ${{ inputs.date || vars.DATE_OVERRIDE }}
-          FORCE: ${{ github.event_name == 'workflow_dispatch' && format('{0}', inputs.force) || vars.FORCE }}
-          CHECK_ONLY: ${{ inputs.check }}
+          # always the literal "true"/"false": "false" is truthy in JS, so the
+          # script must compare against 'true' and never test truthiness
+          FORCE: ${{ github.event_name == 'workflow_dispatch' && format('{0}', inputs.force) || vars.FORCE || 'false' }}
+          CHECK_ONLY: ${{ github.event_name == 'workflow_dispatch' && format('{0}', inputs.check) || 'false' }}
         run: |
           set -o pipefail
           # public boundary: redact again even though the agent scrubs itself
           PROVIDER="${PROVIDER:-}"
           if [[ "$PROVIDER" =~ ^[a-z0-9.-]+$ ]]; then
-            redact() { sed -E "s/$PROVIDER/api/gI"; }
+            redact() { sed -E "s/${PROVIDER//./\\.}/api/gI"; }
           else
             redact() { cat; }
             echo "::warning::secrets.PROVIDER_NAME unset; public logs are not redacted"
@@ -139,7 +152,9 @@ jobs:
         id: commit
         # !cancelled(), not implicit success(): a run that hit the deadline can
         # still leave a complete post, and today's was thrown away
-        if: ${{ !inputs.check && !cancelled() && steps.gen.outputs.skipped == 'false' }}
+        # skipped != 'true', not == 'false': a step that dies before writing the
+        # output must still get its complete post committed
+        if: ${{ !inputs.check && !cancelled() && steps.gen.outputs.skipped != 'true' }}
         working-directory: site
         env:
           DATE: ${{ steps.gen.outputs.date }}
@@ -147,62 +162,78 @@ jobs:
           git config user.name  "innersight-bot"
           git config user.email "bot@users.noreply.github.com"
           [ -n "$DATE" ] || { echo "::warning::no date output; nothing to commit"; exit 0; }
+          [[ "$DATE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] \
+            || { echo "::warning::unexpected date '$DATE'; nothing to commit"; exit 0; }
           post="_posts/${DATE}-entry.md"
           [ -f "$post" ] || { echo "::warning::$post not written; nothing to commit"; exit 0; }
-          # a killed run can leave a half-written post; never commit one
-          [ "$(head -1 "$post")" = "---" ] && [ "$(grep -c '^---$' "$post")" -ge 2 ] \
+          # a killed run can leave a half-written post; never commit one. The
+          # opening fence must be line 1, a closing fence must follow, and the
+          # file must end on a newline — a stray '---' rule in the body is not
+          # enough on its own to prove the post is complete.
+          [ "$(head -1 "$post")" = "---" ] \
+            || { echo "::warning::$post has no opening front-matter fence; not committing"; exit 0; }
+          awk 'NR>1 && $0=="---"{f=1; exit} END{exit !f}' "$post" \
             || { echo "::warning::$post has no closing front-matter fence; not committing"; exit 0; }
+          [ -z "$(tail -c1 "$post")" ] \
+            || { echo "::warning::$post does not end on a newline; not committing"; exit 0; }
+          card=$(sed -n 's/^card:[[:space:]]*"\{0,1\}\([^"]*\)"\{0,1\}[[:space:]]*$/\1/p' "$post" | head -1 || true)
           git add -A
+          # surface anything unexpected the agent dropped into the tree
+          git status --short
           git diff --cached --quiet && exit 0
           git commit -m "Create ${DATE}-entry.md"
-          ok=0
-          for i in 1 2 3; do
-            if git pull --rebase --autostash origin "${GITHUB_REF_NAME}" &&
-               git push origin "HEAD:${GITHUB_REF_NAME}"; then ok=1; break; fi
-            echo "push rejected (attempt $i)"; sleep 5
+          # push first and rebase only on rejection: a clean push needs no
+          # rebase, and a conflicted rebase must be aborted or every remaining
+          # attempt fails with "rebase already in progress"
+          attempt=0
+          until git push origin "HEAD:${GITHUB_REF_NAME}"; do
+            attempt=$((attempt + 1))
+            if [ "$attempt" -ge 3 ]; then
+              echo "::error::push failed after 3 attempts; $post is committed locally only"
+              exit 1
+            fi
+            echo "push rejected (attempt $attempt); rebasing onto origin/${GITHUB_REF_NAME}"
+            sleep $((attempt * 5 + RANDOM % 5))
+            git fetch origin "${GITHUB_REF_NAME}"
+            git rebase "origin/${GITHUB_REF_NAME}" \
+              || { git rebase --abort; echo "::error::rebase conflict on $post"; exit 1; }
           done
-          [ "$ok" = 1 ] || { echo "::error::push failed after 3 attempts"; exit 1; }
           # only a run that actually published the post may announce it
           echo "created=true" >> "$GITHUB_OUTPUT"
+          { echo 'card<<CARD'; printf '%s\n' "${card:-new entry}"; echo 'CARD'; } >> "$GITHUB_OUTPUT"
 
       - name: Commit agent memory
-        if: ${{ !cancelled() && !inputs.check && steps.gen.outputs.skipped == 'false' }}
+        # the post is published by now: a memory push must not redden the day
+        if: ${{ !cancelled() && !inputs.check && steps.gen.outputs.skipped != 'true' }}
+        continue-on-error: true
+        env:
+          DATE: ${{ steps.gen.outputs.date }}
         run: |
           cd .agent
           git config user.name  "innersight-bot"
           git config user.email "bot@users.noreply.github.com"
           git add -A
           git diff --cached --quiet && exit 0
-          git commit -m "memory: ${{ steps.gen.outputs.date }}"
-          git push
-
-      # no issue tracker here: this ping and the run page are the only record,
-      # so a dead webhook fails the step instead of warning and going quiet
-      - name: Notify Discord (failure)
-        if: ${{ failure() }}
-        env:
-          WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_URL }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: |
-          set -euo pipefail
-          [ -n "$WEBHOOK" ] || { echo "::error::no DISCORD_WEBHOOK_URL secret; failures are unannounced"; exit 1; }
-          payload=$(jq -n --arg url "$RUN_URL" \
-            '{allowed_mentions:{parse:[]},
-              embeds:[{title:"daily tarot failed", url:$url, color:11549230, description:$url}]}')
-          body=$(mktemp)
-          trap 'rm -f "$body"' EXIT
-          code=$(printf '%s' "$payload" | curl -sS --fail-with-body \
-                   --retry 3 --retry-delay 2 --retry-all-errors \
-                   -o "$body" -w '%{http_code}' \
-                   -H 'Content-Type: application/json' -d @- "$WEBHOOK" || true)
-          case "$code" in
-            200|204) echo "failure notice posted to discord" ;;
-            *) echo "::error::discord returned HTTP ${code:-none}: $(head -c 300 "$body")"; exit 1 ;;
-          esac
+          git commit -m "memory: ${DATE}"
+          branch=$(git rev-parse --abbrev-ref HEAD)
+          for i in 1 2 3; do
+            git push && exit 0
+            sleep $((i * 5 + RANDOM % 5))
+            if git fetch origin "$branch" && git rebase "origin/$branch"; then
+              :
+            else
+              git rebase --abort || true
+            fi
+          done
+          echo "::error::memory push failed after 3 attempts"
+          exit 1
 
   deploy:
     needs: generate
-    if: ${{ always() && !inputs.check && (github.ref == 'refs/heads/master' || inputs.deploy) }}
+    # always(): a failed generate can still have committed a complete post, and
+    # the site should go out. The repository guard has to be repeated here — a
+    # fork skips generate, and without it deploy would run and fail.
+    if: ${{ always() && !inputs.check && github.repository == 'theinnersight/theinnersight.github.io' && (github.ref == 'refs/heads/master' || inputs.deploy) }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -213,51 +244,66 @@ jobs:
       name: github-pages
       url: ${{ steps.deploy.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           # branch tip, not github.sha: generate has already pushed today's post
           ref: ${{ github.ref_name }}
+          # read-only job: don't leave a write token in .git/config
+          persist-credentials: false
 
       - name: Show what we are building
         run: |
           git log -1 --format='building %h %s'
           ls -t _posts/*.md | head -3
 
-      - uses: actions/configure-pages@v5
+      - uses: actions/configure-pages@v6
       - uses: actions/jekyll-build-pages@v1
         with: { source: ./, destination: ./_site }
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v5
         with: { path: ./_site }
       - id: deploy
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
 
+  notify:
+    # both results are needed to pick the message, so always() then gate per step
+    needs: [generate, deploy]
+    # same repository guard as deploy: a fork has no secrets and no Pages
+    if: ${{ always() && !inputs.check && github.repository == 'theinnersight/theinnersight.github.io' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions: {}
+    steps:
       # public channel: link and card name only, nothing from the private checkout
-      # runs only after deploy, so the announced URL is already live
+      # no checkout here: card and date arrive as outputs, so the URL is already live
       # continue-on-error: the site is up, a discord hiccup must not redden the run
       - name: Notify Discord
-        # created, not skipped: a push that finds the post already there stays quiet
-        if: ${{ success() && !inputs.check && needs.generate.outputs.created == 'true' }}
+        if: ${{ needs.deploy.result == 'success' && needs.generate.outputs.created == 'true' }}
         continue-on-error: true
         env:
           WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_URL }}
           DATE: ${{ needs.generate.outputs.date }}
+          CARD: ${{ needs.generate.outputs.card }}
           BASE: ${{ vars.SITE_URL || 'https://theinnersight.github.io' }}
         run: |
           set -euo pipefail
           [ -n "$WEBHOOK" ] || { echo "::warning::no DISCORD_WEBHOOK_URL secret; skipping"; exit 0; }
           [[ "$DATE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] \
             || { echo "::warning::unexpected date '$DATE'; skipping"; exit 0; }
-          [ "$(git log -1 --format=%s)" = "Create ${DATE}-entry.md" ] \
-            || { echo "::warning::tip is not today's post commit; skipping"; exit 0; }
-
-          post="_posts/${DATE}-entry.md"
-          card=""
-          if [ -f "$post" ]; then
-            card=$(sed -n 's/^card:[[:space:]]*"\{0,1\}\([^"]*\)"\{0,1\}[[:space:]]*$/\1/p' "$post" | head -1 || true)
-          fi
           url="${BASE%/}/tarot/${DATE:0:4}/${DATE:5:2}/${DATE:8:2}/entry.html"
 
-          payload=$(jq -n --arg url "$url" --arg card "${card:-new entry}" --arg date "$DATE" \
+          # deploy-pages returns before the CDN has the build. Poll the real URL
+          # rather than announcing a link that 404s, which also covers a human
+          # push having moved the tip out from under us.
+          live=0
+          for i in 1 2 3 4 5; do
+            if curl -fsS --head --connect-timeout 5 --max-time 10 -o /dev/null "$url"; then
+              live=1; break
+            fi
+            sleep $((i * 2))
+          done
+          [ "$live" = 1 ] || echo "::warning::$url not live after 5 checks; announcing anyway"
+
+          payload=$(jq -n --arg url "$url" --arg card "${CARD:-new entry}" --arg date "$DATE" \
             '{allowed_mentions:{parse:[]},
               embeds:[{title:$card, url:$url, color:8089504,
                        description:("Today’s draw is up — " + $date)}]}')
@@ -265,6 +311,7 @@ jobs:
           trap 'rm -f "$body"' EXIT
           code=$(printf '%s' "$payload" | curl -sS --fail-with-body \
                    --retry 3 --retry-delay 2 --retry-all-errors \
+                   --connect-timeout 5 --max-time 20 --retry-max-time 45 \
                    -o "$body" -w '%{http_code}' \
                    -H 'Content-Type: application/json' -d @- "$WEBHOOK" || true)
           case "$code" in
@@ -272,25 +319,30 @@ jobs:
             *) echo "::warning::discord returned HTTP ${code:-none}: $(head -c 300 "$body")" ;;
           esac
 
-      # deploy failures were otherwise silent: generate's notifier only covers generate
-      - name: Notify Discord (deploy failed)
-        if: ${{ failure() && needs.generate.result == 'success' }}
+      # no issue tracker here: this ping and the run page are the only record,
+      # so a dead webhook fails the step instead of warning and going quiet
+      - name: Notify Discord (failure)
+        # cancelled as well as failure: with cancel-in-progress a human Cancel, or
+        # a superseding run, otherwise leaves no trace at all
+        if: ${{ needs.generate.result == 'failure' || needs.generate.result == 'cancelled' || needs.deploy.result == 'failure' || needs.deploy.result == 'cancelled' }}
         env:
           WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_URL }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          STAGE: ${{ needs.generate.result != 'success' && needs.generate.result != 'skipped' && 'generate' || 'deploy' }}
         run: |
           set -euo pipefail
           [ -n "$WEBHOOK" ] || { echo "::error::no DISCORD_WEBHOOK_URL secret; failures are unannounced"; exit 1; }
-          payload=$(jq -n --arg url "$RUN_URL" \
+          payload=$(jq -n --arg url "$RUN_URL" --arg stage "$STAGE" \
             '{allowed_mentions:{parse:[]},
-              embeds:[{title:"daily tarot deploy failed", url:$url, color:11549230, description:$url}]}')
+              embeds:[{title:("daily tarot " + $stage + " failed"), url:$url, color:11549230, description:$url}]}')
           body=$(mktemp)
           trap 'rm -f "$body"' EXIT
           code=$(printf '%s' "$payload" | curl -sS --fail-with-body \
                    --retry 3 --retry-delay 2 --retry-all-errors \
+                   --connect-timeout 5 --max-time 20 --retry-max-time 45 \
                    -o "$body" -w '%{http_code}' \
                    -H 'Content-Type: application/json' -d @- "$WEBHOOK" || true)
           case "$code" in
-            200|204) echo "deploy-failure notice posted to discord" ;;
+            200|204) echo "failure notice posted to discord" ;;
             *) echo "::error::discord returned HTTP ${code:-none}: $(head -c 300 "$body")"; exit 1 ;;
           esac
