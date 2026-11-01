@@ -36,6 +36,7 @@ jobs:
     outputs:
       date: ${{ steps.gen.outputs.date }}
       skipped: ${{ steps.gen.outputs.skipped }}
+      created: ${{ steps.commit.outputs.created }}
     steps:
       - name: Mint app token
         id: app
@@ -135,6 +136,7 @@ jobs:
           exit $rc
 
       - name: Commit site
+        id: commit
         # !cancelled(), not implicit success(): a run that hit the deadline can
         # still leave a complete post, and today's was thrown away
         if: ${{ !inputs.check && !cancelled() && steps.gen.outputs.skipped == 'false' }}
@@ -160,6 +162,8 @@ jobs:
             echo "push rejected (attempt $i)"; sleep 5
           done
           [ "$ok" = 1 ] || { echo "::error::push failed after 3 attempts"; exit 1; }
+          # only a run that actually published the post may announce it
+          echo "created=true" >> "$GITHUB_OUTPUT"
 
       - name: Commit agent memory
         if: ${{ !cancelled() && !inputs.check && steps.gen.outputs.skipped == 'false' }}
@@ -231,7 +235,8 @@ jobs:
       # runs only after deploy, so the announced URL is already live
       # continue-on-error: the site is up, a discord hiccup must not redden the run
       - name: Notify Discord
-        if: ${{ success() && !inputs.check && needs.generate.outputs.skipped == 'false' && github.event_name != 'push' }}
+        # created, not skipped: a push that finds the post already there stays quiet
+        if: ${{ success() && !inputs.check && needs.generate.outputs.created == 'true' }}
         continue-on-error: true
         env:
           WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_URL }}
