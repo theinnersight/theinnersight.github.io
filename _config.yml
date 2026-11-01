@@ -2,6 +2,12 @@ title: The Innersight
 description: Inner sight, written down
 theme: minima
 
+# Pin the post URL shape: the Discord notifier builds
+# /tarot/YYYY/MM/DD/entry.html from it. Identical to Jekyll's default, so no URL
+# moves — but a later permalink change can no longer silently 404 every announced
+# link.
+permalink: /tarot/:year/:month/:day/:title:output_ext
+
 minima:
   date_format: "%a, %b %-d, %Y"
 
