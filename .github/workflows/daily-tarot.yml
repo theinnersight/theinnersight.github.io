@@ -32,11 +32,17 @@ jobs:
   generate:
     if: ${{ github.repository == 'theinnersight/theinnersight.github.io' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 18
+    # consumed by the deploy job's notifier, which runs after the build lands
+    outputs:
+      date: ${{ steps.gen.outputs.date }}
+      skipped: ${{ steps.gen.outputs.skipped }}
     steps:
       - name: Mint app token
         id: app
         # v3: repositories accepts "owner/name", matching vars.AGENT_REPO
+        # app-id still works and still warns; client-id wants a different value
+        # (the App's OAuth Client ID), so switching needs a new secret first
         uses: actions/create-github-app-token@v3
         with:
           app-id: ${{ secrets.APP_ID }}
@@ -95,8 +101,9 @@ jobs:
 
       - name: Generate entry
         id: gen
-        # under the job's 15 min and run-agent's 7 min deadline
-        timeout-minutes: 8
+        # headroom above run-agent's 7 min deadline, so the agent's own exit
+        # code and log tail survive instead of the runner killing the step
+        timeout-minutes: 10
         working-directory: site
         env:
           API_KEY: ${{ secrets.API_KEY }}
@@ -115,14 +122,24 @@ jobs:
           exit $rc
 
       - name: Commit site
-        if: ${{ !inputs.check && steps.gen.outputs.skipped == 'false' }}
+        # !cancelled(), not implicit success(): a run that hit the deadline can
+        # still leave a complete post, and today's was thrown away
+        if: ${{ !inputs.check && !cancelled() && steps.gen.outputs.skipped == 'false' }}
         working-directory: site
+        env:
+          DATE: ${{ steps.gen.outputs.date }}
         run: |
           git config user.name  "innersight-bot"
           git config user.email "bot@users.noreply.github.com"
+          [ -n "$DATE" ] || { echo "::warning::no date output; nothing to commit"; exit 0; }
+          post="_posts/${DATE}-entry.md"
+          [ -f "$post" ] || { echo "::warning::$post not written; nothing to commit"; exit 0; }
+          # a killed run can leave a half-written post; never commit one
+          [ "$(head -1 "$post")" = "---" ] && [ "$(grep -c '^---$' "$post")" -ge 2 ] \
+            || { echo "::warning::$post has no closing front-matter fence; not committing"; exit 0; }
           git add -A
           git diff --cached --quiet && exit 0
-          git commit -m "Create ${{ steps.gen.outputs.date }}-entry.md"
+          git commit -m "Create ${DATE}-entry.md"
           ok=0
           for i in 1 2 3; do
             if git pull --rebase --autostash origin "${GITHUB_REF_NAME}" &&
@@ -130,33 +147,6 @@ jobs:
             echo "push rejected (attempt $i)"; sleep 5
           done
           [ "$ok" = 1 ] || { echo "::error::push failed after 3 attempts"; exit 1; }
-
-      # public channel: link and card name only, nothing from the private checkout
-      - name: Notify Discord
-        if: ${{ !cancelled() && !inputs.check && steps.gen.outputs.skipped == 'false' && github.event_name != 'push' }}
-        continue-on-error: true
-        env:
-          WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_URL }}
-          DATE: ${{ steps.gen.outputs.date }}
-          BASE: ${{ vars.SITE_URL || 'https://theinnersight.github.io' }}
-        run: |
-          set -euo pipefail
-          [ -n "$WEBHOOK" ] || { echo "::warning::no DISCORD_WEBHOOK_URL secret; skipping"; exit 0; }
-          [[ "$DATE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] \
-            || { echo "::warning::unexpected date '$DATE'; skipping"; exit 0; }
-          [ "$(git -C site log -1 --format=%s)" = "Create ${DATE}-entry.md" ] \
-            || { echo "tip is not today's post commit; skipping"; exit 0; }
-
-          post="site/_posts/${DATE}-entry.md"
-          card=""
-          [ -f "$post" ] && card=$(sed -n 's/^card:[[:space:]]*"\{0,1\}\([^"]*\)"\{0,1\}[[:space:]]*$/\1/p' "$post" | head -1) || true
-          url="${BASE%/}/tarot/${DATE:0:4}/${DATE:5:2}/${DATE:8:2}/entry.html"
-
-          jq -n --arg url "$url" --arg card "${card:-new entry}" --arg date "$DATE" \
-            '{allowed_mentions:{parse:[]},
-              embeds:[{title:$card, url:$url, color:8089504,
-                       description:("Today’s draw is up — " + $date)}]}' \
-          | curl -sS --fail-with-body -H 'Content-Type: application/json' -d @- "$WEBHOOK" >/dev/null
 
       - name: Commit agent memory
         if: ${{ !cancelled() && !inputs.check && steps.gen.outputs.skipped == 'false' }}
@@ -189,11 +179,20 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
-          [ -n "$WEBHOOK" ] || exit 0
-          jq -n --arg url "$RUN_URL" \
+          [ -n "$WEBHOOK" ] || { echo "::warning::no DISCORD_WEBHOOK_URL secret"; exit 0; }
+          payload=$(jq -n --arg url "$RUN_URL" \
             '{allowed_mentions:{parse:[]},
-              embeds:[{title:"daily tarot failed", url:$url, color:11549230, description:$url}]}' \
-          | curl -sS --fail-with-body -H 'Content-Type: application/json' -d @- "$WEBHOOK" >/dev/null
+              embeds:[{title:"daily tarot failed", url:$url, color:11549230, description:$url}]}')
+          body=$(mktemp)
+          code=$(printf '%s' "$payload" | curl -sS --fail-with-body \
+                   --retry 3 --retry-delay 2 --retry-all-errors \
+                   -o "$body" -w '%{http_code}' \
+                   -H 'Content-Type: application/json' -d @- "$WEBHOOK" || true)
+          case "$code" in
+            200|204) echo "failure notice posted to discord" ;;
+            *) echo "::warning::discord returned HTTP ${code:-none}: $(head -c 300 "$body")" ;;
+          esac
+          rm -f "$body"
 
   deploy:
     needs: generate
@@ -225,3 +224,66 @@ jobs:
         with: { path: ./_site }
       - id: deploy
         uses: actions/deploy-pages@v4
+
+      # public channel: link and card name only, nothing from the private checkout
+      # runs only after deploy, so the announced URL is already live
+      - name: Notify Discord
+        if: ${{ success() && !inputs.check && needs.generate.outputs.skipped == 'false' && github.event_name != 'push' }}
+        continue-on-error: true
+        env:
+          WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          DATE: ${{ needs.generate.outputs.date }}
+          BASE: ${{ vars.SITE_URL || 'https://theinnersight.github.io' }}
+        run: |
+          set -euo pipefail
+          [ -n "$WEBHOOK" ] || { echo "::warning::no DISCORD_WEBHOOK_URL secret; skipping"; exit 0; }
+          [[ "$DATE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] \
+            || { echo "::warning::unexpected date '$DATE'; skipping"; exit 0; }
+          [ "$(git log -1 --format=%s)" = "Create ${DATE}-entry.md" ] \
+            || { echo "::warning::tip is not today's post commit; skipping"; exit 0; }
+
+          post="_posts/${DATE}-entry.md"
+          card=""
+          if [ -f "$post" ]; then
+            card=$(sed -n 's/^card:[[:space:]]*"\{0,1\}\([^"]*\)"\{0,1\}[[:space:]]*$/\1/p' "$post" | head -1 || true)
+          fi
+          url="${BASE%/}/tarot/${DATE:0:4}/${DATE:5:2}/${DATE:8:2}/entry.html"
+
+          payload=$(jq -n --arg url "$url" --arg card "${card:-new entry}" --arg date "$DATE" \
+            '{allowed_mentions:{parse:[]},
+              embeds:[{title:$card, url:$url, color:8089504,
+                       description:("Today’s draw is up — " + $date)}]}')
+          body=$(mktemp)
+          code=$(printf '%s' "$payload" | curl -sS --fail-with-body \
+                   --retry 3 --retry-delay 2 --retry-all-errors \
+                   -o "$body" -w '%{http_code}' \
+                   -H 'Content-Type: application/json' -d @- "$WEBHOOK" || true)
+          case "$code" in
+            200|204) echo "posted to discord" ;;
+            *) echo "::warning::discord returned HTTP ${code:-none}: $(head -c 300 "$body")" ;;
+          esac
+          rm -f "$body"
+
+      # deploy failures were otherwise silent: generate's notifier only covers generate
+      - name: Notify Discord (deploy failed)
+        if: ${{ failure() && needs.generate.result == 'success' }}
+        continue-on-error: true
+        env:
+          WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          [ -n "$WEBHOOK" ] || { echo "::warning::no DISCORD_WEBHOOK_URL secret"; exit 0; }
+          payload=$(jq -n --arg url "$RUN_URL" \
+            '{allowed_mentions:{parse:[]},
+              embeds:[{title:"daily tarot deploy failed", url:$url, color:11549230, description:$url}]}')
+          body=$(mktemp)
+          code=$(printf '%s' "$payload" | curl -sS --fail-with-body \
+                   --retry 3 --retry-delay 2 --retry-all-errors \
+                   -o "$body" -w '%{http_code}' \
+                   -H 'Content-Type: application/json' -d @- "$WEBHOOK" || true)
+          case "$code" in
+            200|204) echo "deploy-failure notice posted to discord" ;;
+            *) echo "::warning::discord returned HTTP ${code:-none}: $(head -c 300 "$body")" ;;
+          esac
+          rm -f "$body"
