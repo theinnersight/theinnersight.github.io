@@ -21,7 +21,6 @@ on:
 
 permissions:
   contents: write
-  issues: write
 
 # bump the suffix to escape a wedged run; cancel-in-progress supersedes zombies
 concurrency:
@@ -70,12 +69,19 @@ jobs:
         env:
           API_KEY: ${{ secrets.API_KEY }}
           AGENT_DIR: ${{ github.workspace }}/.agent
+          PROVIDER: ${{ secrets.PROVIDER_NAME }}
         run: |
           set -euo pipefail
 
-          # logs are public: rewrite anything naming the provider
-          # (character classes so the word itself is not in this file)
-          redact() { sed -E 's/[Vv][Ee][Nn][Ii][Cc][Ee]/api/g'; }
+          # logs are public: keep the private checkout's provider-specific
+          # filenames out of them; the name is a secret, not in this file
+          PROVIDER="${PROVIDER:-}"
+          if [[ "$PROVIDER" =~ ^[a-z0-9.-]+$ ]]; then
+            redact() { sed -E "s/$PROVIDER/api/gI"; }
+          else
+            redact() { cat; }
+            echo "::warning::secrets.PROVIDER_NAME unset; public logs are not redacted"
+          fi
 
           # env, not an expression — the run script is echoed into the log
           test -n "$API_KEY" || { echo "::error::no API key"; exit 1; }
@@ -108,6 +114,7 @@ jobs:
         env:
           API_KEY: ${{ secrets.API_KEY }}
           AGENT_DIR: ${{ github.workspace }}/.agent
+          PROVIDER: ${{ secrets.PROVIDER_NAME }}
           EVENT_NAME: ${{ github.event_name }}
           DATE_OVERRIDE: ${{ inputs.date || vars.DATE_OVERRIDE }}
           FORCE: ${{ github.event_name == 'workflow_dispatch' && format('{0}', inputs.force) || vars.FORCE }}
@@ -115,7 +122,13 @@ jobs:
         run: |
           set -o pipefail
           # public boundary: redact again even though the agent scrubs itself
-          redact() { sed -E 's/[Vv][Ee][Nn][Ii][Cc][Ee]/api/g'; }
+          PROVIDER="${PROVIDER:-}"
+          if [[ "$PROVIDER" =~ ^[a-z0-9.-]+$ ]]; then
+            redact() { sed -E "s/$PROVIDER/api/gI"; }
+          else
+            redact() { cat; }
+            echo "::warning::secrets.PROVIDER_NAME unset; public logs are not redacted"
+          fi
           rc=0
           node "$AGENT_DIR/scripts/run-agent.mjs" 2>&1 | redact | tee /tmp/agent.log || rc=$?
           { echo '```'; tail -40 /tmp/agent.log; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
@@ -159,40 +172,29 @@ jobs:
           git commit -m "memory: ${{ steps.gen.outputs.date }}"
           git push
 
-      - name: Open issue on failure
-        if: ${{ failure() }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh api --method POST "repos/${{ github.repository }}/issues" \
-            -f title="daily tarot failed $(date -u +%F)" \
-            -f body="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
-            >/dev/null 2>&1 \
-            || echo "::warning::could not open a failure issue (Issues disabled?)"
-
-      # the issue above is the durable record; this is the immediate signal
+      # no issue tracker here: this ping and the run page are the only record,
+      # so a dead webhook fails the step instead of warning and going quiet
       - name: Notify Discord (failure)
         if: ${{ failure() }}
-        continue-on-error: true
         env:
           WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_URL }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
-          [ -n "$WEBHOOK" ] || { echo "::warning::no DISCORD_WEBHOOK_URL secret"; exit 0; }
+          [ -n "$WEBHOOK" ] || { echo "::error::no DISCORD_WEBHOOK_URL secret; failures are unannounced"; exit 1; }
           payload=$(jq -n --arg url "$RUN_URL" \
             '{allowed_mentions:{parse:[]},
               embeds:[{title:"daily tarot failed", url:$url, color:11549230, description:$url}]}')
           body=$(mktemp)
+          trap 'rm -f "$body"' EXIT
           code=$(printf '%s' "$payload" | curl -sS --fail-with-body \
                    --retry 3 --retry-delay 2 --retry-all-errors \
                    -o "$body" -w '%{http_code}' \
                    -H 'Content-Type: application/json' -d @- "$WEBHOOK" || true)
           case "$code" in
             200|204) echo "failure notice posted to discord" ;;
-            *) echo "::warning::discord returned HTTP ${code:-none}: $(head -c 300 "$body")" ;;
+            *) echo "::error::discord returned HTTP ${code:-none}: $(head -c 300 "$body")"; exit 1 ;;
           esac
-          rm -f "$body"
 
   deploy:
     needs: generate
@@ -227,6 +229,7 @@ jobs:
 
       # public channel: link and card name only, nothing from the private checkout
       # runs only after deploy, so the announced URL is already live
+      # continue-on-error: the site is up, a discord hiccup must not redden the run
       - name: Notify Discord
         if: ${{ success() && !inputs.check && needs.generate.outputs.skipped == 'false' && github.event_name != 'push' }}
         continue-on-error: true
@@ -254,6 +257,7 @@ jobs:
               embeds:[{title:$card, url:$url, color:8089504,
                        description:("Today’s draw is up — " + $date)}]}')
           body=$(mktemp)
+          trap 'rm -f "$body"' EXIT
           code=$(printf '%s' "$payload" | curl -sS --fail-with-body \
                    --retry 3 --retry-delay 2 --retry-all-errors \
                    -o "$body" -w '%{http_code}' \
@@ -262,28 +266,26 @@ jobs:
             200|204) echo "posted to discord" ;;
             *) echo "::warning::discord returned HTTP ${code:-none}: $(head -c 300 "$body")" ;;
           esac
-          rm -f "$body"
 
       # deploy failures were otherwise silent: generate's notifier only covers generate
       - name: Notify Discord (deploy failed)
         if: ${{ failure() && needs.generate.result == 'success' }}
-        continue-on-error: true
         env:
           WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_URL }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
-          [ -n "$WEBHOOK" ] || { echo "::warning::no DISCORD_WEBHOOK_URL secret"; exit 0; }
+          [ -n "$WEBHOOK" ] || { echo "::error::no DISCORD_WEBHOOK_URL secret; failures are unannounced"; exit 1; }
           payload=$(jq -n --arg url "$RUN_URL" \
             '{allowed_mentions:{parse:[]},
               embeds:[{title:"daily tarot deploy failed", url:$url, color:11549230, description:$url}]}')
           body=$(mktemp)
+          trap 'rm -f "$body"' EXIT
           code=$(printf '%s' "$payload" | curl -sS --fail-with-body \
                    --retry 3 --retry-delay 2 --retry-all-errors \
                    -o "$body" -w '%{http_code}' \
                    -H 'Content-Type: application/json' -d @- "$WEBHOOK" || true)
           case "$code" in
             200|204) echo "deploy-failure notice posted to discord" ;;
-            *) echo "::warning::discord returned HTTP ${code:-none}: $(head -c 300 "$body")" ;;
+            *) echo "::error::discord returned HTTP ${code:-none}: $(head -c 300 "$body")"; exit 1 ;;
           esac
-          rm -f "$body"
