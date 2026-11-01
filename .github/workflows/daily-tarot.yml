@@ -7,12 +7,12 @@ env:
 
 on:
   schedule:
-    # These are the literal fire times. The old comments claimed each run lands
-    # ~5h20m later, which is more delay than the scheduler produces — verify
-    # against the run history before trusting either.
-    - cron: "10 4 * * *"      # primary
-    - cron: "10 5 * * *"      # catch-up +1h
-    - cron: "10 8 * * *"      # catch-up +4h
+    # the scheduler runs hours late on this repo — 2-6h, measured over the last
+    # week — so these are set early to land ~05:30-07:00 EDT. The "# tarot:primary"
+    # marker is required by run-agent's config check: do not remove it.
+    - cron: "10 4 * * *"      # tarot:primary    (target run ~9:30 UTC  / 05:30 EDT)
+    - cron: "10 5 * * *"      # catch-up +1h     (target run ~10:30 UTC / 06:30 EDT)
+    - cron: "10 8 * * *"      # catch-up +4h     (target run ~13:30 UTC / 09:30 EDT)
   push:
     branches: ["master"]
     # only the files a regeneration actually depends on
