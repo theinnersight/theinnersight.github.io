@@ -129,10 +129,11 @@ jobs:
           PROVIDER: ${{ secrets.PROVIDER_NAME }}
           EVENT_NAME: ${{ github.event_name }}
           DATE_OVERRIDE: ${{ inputs.date || vars.DATE_OVERRIDE }}
-          # always the literal "true"/"false": "false" is truthy in JS, so the
-          # script must compare against 'true' and never test truthiness
-          FORCE: ${{ github.event_name == 'workflow_dispatch' && format('{0}', inputs.force) || vars.FORCE || 'false' }}
-          CHECK_ONLY: ${{ github.event_name == 'workflow_dispatch' && format('{0}', inputs.check) || 'false' }}
+          # empty when false, never the string "false": empty is falsy under both
+          # `=== 'true'` and bare truthiness. "false" is truthy in JS and put
+          # run-agent into check mode on every push and schedule.
+          FORCE: ${{ ((github.event_name == 'workflow_dispatch' && inputs.force) || vars.FORCE == 'true') && 'true' || '' }}
+          CHECK_ONLY: ${{ github.event_name == 'workflow_dispatch' && inputs.check && 'true' || '' }}
         run: |
           set -o pipefail
           # public boundary: redact again even though the agent scrubs itself
