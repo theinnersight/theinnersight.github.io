@@ -37,7 +37,7 @@ jobs:
   generate:
     if: ${{ github.repository == 'theinnersight/theinnersight.github.io' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 18
+    timeout-minutes: 20
     # consumed by notify, which runs only after deploy has landed the build
     outputs:
       date: ${{ steps.gen.outputs.date }}
@@ -119,9 +119,9 @@ jobs:
 
       - name: Generate entry
         id: gen
-        # headroom above run-agent's 7 min deadline, so the agent's own exit
+        # headroom above run-agent's 12 min deadline, so the agent's own exit
         # code and log tail survive instead of the runner killing the step
-        timeout-minutes: 10
+        timeout-minutes: 14
         working-directory: site
         env:
           API_KEY: ${{ secrets.API_KEY }}
