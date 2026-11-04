@@ -10,8 +10,8 @@ on:
     # the scheduler runs 2-6h late on this repo, so these fire early to land
     # ~05:30-07:00 EDT. "# tarot:primary" is required by run-agent: do not remove.
     - cron: "10 4 * * *"      # tarot:primary    (target ~9:30 UTC  / 05:30 EDT)
-    #- cron: "10 5 * * *"      # catch-up +1h     (target ~10:30 UTC / 06:30 EDT)
-    #- cron: "10 8 * * *"      # catch-up +4h     (target ~13:30 UTC / 09:30 EDT)
+    - cron: "10 5 * * *"      # catch-up +1h     (target ~10:30 UTC / 06:30 EDT)
+    - cron: "10 8 * * *"      # catch-up +4h     (target ~13:30 UTC / 09:30 EDT)
   push:
     branches: ["master"]
     paths: ["_posts/**", "_config.yml", ".github/workflows/daily-tarot.yml"]
@@ -35,10 +35,9 @@ jobs:
   generate:
     if: ${{ github.repository == 'theinnersight/theinnersight.github.io' }}
     runs-on: ubuntu-latest
-    # run-agent's deadline is ~7 min and lives in the agent repo — these timeouts
-    # are only a wrapper, so raising them alone changes nothing. Every deadline
-    # death lands at 6m58s-7m52s, every success under 2m01s. 18/24 encode a 16 min
-    # deadline the agent does not use yet.
+    # run-agent's deadline is 16 min and lives in the agent repo — these timeouts
+    # are only a wrapper. Keep step = deadline + 2 and job = step + 6, or the
+    # runner kills the step before the agent can report.
     timeout-minutes: 24
     # consumed by notify, which runs only after deploy has landed the build
     outputs:
@@ -225,9 +224,11 @@ jobs:
 
   deploy:
     needs: generate
-    # always(): a failed generate can still have committed a complete post. The
-    # repository guard repeats here — a fork skips generate and would fail.
-    if: ${{ always() && !inputs.check && github.repository == 'theinnersight/theinnersight.github.io' && (github.ref == 'refs/heads/master' || inputs.deploy) }}
+    # always(): a failed generate can still have committed a complete post, so the
+    # date output is what decides — no date means nothing changed and the
+    # redeploy would publish identical bytes. The repository guard repeats here
+    # because a fork skips generate.
+    if: ${{ always() && !inputs.check && needs.generate.outputs.date != '' && github.repository == 'theinnersight/theinnersight.github.io' && (github.ref == 'refs/heads/master' || inputs.deploy) }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -323,9 +324,15 @@ jobs:
         run: |
           set -euo pipefail
           [ -n "$WEBHOOK" ] || { echo "::error::no DISCORD_WEBHOOK_URL secret; failures are unannounced"; exit 1; }
-          payload=$(jq -n --arg url "$RUN_URL" --arg stage "$STAGE" \
+          # generate can die before the date exists anywhere in the run, so the
+          # ping computes it: this is the only record, and it must say what to
+          # backfill. UTC, matching the site's clock.
+          date=$(date -u +%F)
+          payload=$(jq -n --arg url "$RUN_URL" --arg stage "$STAGE" --arg date "$date" \
             '{allowed_mentions:{parse:[]},
-              embeds:[{title:("daily tarot " + $stage + " failed"), url:$url, color:11549230, description:$url}]}')
+              embeds:[{title:("daily tarot " + $stage + " failed"), url:$url, color:11549230,
+                       description:($url + "\n\nno entry for " + $date +
+                                    " — backfill: Actions → daily tarot → Run workflow, date=" + $date)}]}')
           body=$(mktemp)
           trap 'rm -f "$body"' EXIT
           code=$(printf '%s' "$payload" | curl -sS --fail-with-body \
