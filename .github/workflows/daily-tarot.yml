@@ -97,7 +97,7 @@ jobs:
             || { echo "::error::agent repo not checked out"; exit 1; }
 
           echo "node $(node --version)"
-          { echo -n 'agent '; git -C "$AGENT_DIR" log -1 --format='%h %s'; } | redact >> "$GITHUB_STEP_SUMMARY"
+          { echo -n 'agent '; git -C "$AGENT_DIR" log -1 --format='%h'; } | redact >> "$GITHUB_STEP_SUMMARY"
 
           n=0
           # NUL-delimited: a filename with a space would split the word list
@@ -248,7 +248,8 @@ jobs:
 
       - name: Show what we are building
         run: |
-          git log -1 --format='building %h %s'
+          git log -1 --format='building %h'
+
           ls -t _posts/*.md | head -3
 
       - uses: actions/configure-pages@v6
